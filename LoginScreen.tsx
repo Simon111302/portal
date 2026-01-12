@@ -15,7 +15,7 @@ const LoginScreen = () => {
   const navigation = useNavigation<any>();
 
   // ✅ MOBILE NETWORK CONFIG
-  const API_URL = Platform.OS === 'android' ? 'http://10.0.2.2:5000' : 'http://localhost:5000';
+  const API_URL = 'https://portal-production-26b9.up.railway.app/';
 
 const handleLogin = async (): Promise<void> => {
   if (!email || !password) {

@@ -9,9 +9,14 @@ const PORT = process.env.PORT || 5000;
 
 // Middleware
 app.use(cors({
-  origin: ['http://localhost:8081', 'http://10.0.2.2:8081'],
+  origin: [
+    'http://localhost:8081',
+    'http://10.0.2.2:8081',
+    'https://portal-production-26b9.up.railway.app'  // Add this
+  ],
   credentials: true
 }));
+
 app.use(express.json({ limit: '10mb' }));
 app.use((req, res, next) => {
   console.log(`${req.method} ${req.path} - ${req.ip}`);
