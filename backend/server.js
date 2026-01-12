@@ -144,48 +144,45 @@ app.post('/api/link-all-records', async (req, res) => {
 
 
 
+
 app.post('/api/login', async (req, res) => {
   try {
-    console.log('FULL req.body:', JSON.stringify(req.body, null, 2));
+    console.log('LOGIN ATTEMPT:', req.body.email);
 
-    const emailLower = req.body?.email?.toLowerCase().trim();
-    const passwordInput = req.body?.password;
+    const { email, password } = req.body;
+    const emailLower = email.toLowerCase().trim();
 
-    if (!emailLower || !passwordInput) {
-      return res.status(400).json({ error: 'Email and password required' });
+    if (!emailLower || !password) {
+      return res.status(400).json({ success: false, error: 'Email and password required' });
     }
 
-    let student = await Student.findOne({ email: emailLower });
+    // ✅ FIND EXISTING STUDENT
+    let student = await Student.findOne({ email: emailLower }).select('+password');
 
-    if (!student) {
-      const studentId = `STU${Date.now().toString().slice(-6)}`;
-      const baseName = emailLower.split('@')[0]?.replace(/[^a-zA-Z]/g, '') || 'DemoStudent';
-      const safeName = baseName.charAt(0).toUpperCase() + baseName.slice(1);
-
-      console.log('Creating student:', studentId, safeName, emailLower);
-
+    // ✅ PASSWORD CHECK REQUIRED [web:62]
+    if (student) {
+      // VALIDATE PASSWORD
+      const isMatch = await bcrypt.compare(password, student.password);
+      if (!isMatch) {
+        console.log('❌ Wrong password for:', emailLower);
+        return res.status(401).json({ success: false, error: 'Wrong password' });
+      }
+      console.log('✅ Password OK for:', emailLower);
+    } else {
+      // ✅ NEW STUDENT (but hash password!)
+      console.log('Creating new student:', emailLower);
       student = new Student({
-        studentId,
-        name: safeName,
+        studentId: `STU${Date.now().toString().slice(-6)}`,
+        name: emailLower.split('@')[0].replace(/[^a-zA-Z]/g, '').charAt(0).toUpperCase() + emailLower.split('@')[0].replace(/[^a-zA-Z]/g, '').slice(1),
         email: emailLower,
-        password: await bcrypt.hash(passwordInput, 12),
-        grade: 'Grade 10',
-        attendance: []
+        password: await bcrypt.hash(password, 12),  // ✅ HASH IT!
+        grade: 'Grade 10'
       });
-
       await student.save();
-      console.log('STUDENT SAVED:', student._id);
     }
 
-    // REMOVED HARDCODED ATTENDANCE CREATION
-
-    // POPULATE & SEND SUCCESS
-    const studentWithAtt = await Student.findById(student._id).populate('attendance', 'status date subject');
-
-    console.log('LOGIN SUCCESS:', {
-      id: student._id.toString(),
-      attendanceCount: studentWithAtt.attendance.length
-    });
+    // ✅ POPULATE ATTENDANCE
+    const studentWithAtt = await Student.findById(student._id).populate('attendance');
 
     res.json({
       success: true,
@@ -193,17 +190,15 @@ app.post('/api/login', async (req, res) => {
         id: student._id.toString(),
         studentId: student.studentId,
         username: student.name,
-        email: student.email,
-        attendanceCount: studentWithAtt.attendance.length
+        name: student.name,
+        email: student.email
       }
     });
   } catch (error) {
-    console.error('LOGIN ERROR:', error.message);
-    console.error('Validation details:', error.errors);
-    res.status(500).json({ error: error.message });
+    console.error('LOGIN ERROR:', error);
+    res.status(500).json({ success: false, error: 'Server error' });
   }
 });
-
 
 
 // ✅ Get attendance by student ObjectId (React Native uses this)

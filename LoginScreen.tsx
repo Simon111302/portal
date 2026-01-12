@@ -15,7 +15,7 @@ const LoginScreen = () => {
   const navigation = useNavigation<any>();
 
   // ✅ MOBILE NETWORK CONFIG
-  const API_URL = 'https://portal-production-26b9.up.railway.app/';
+  const API_URL = 'https://portal-production-26b9.up.railway.app';
 
 const handleLogin = async (): Promise<void> => {
   if (!email || !password) {
@@ -31,26 +31,30 @@ const handleLogin = async (): Promise<void> => {
       password: password.trim()
     });
 
-    if (response.data.success) {
+    console.log('🔍 LOGIN:', response.status, response.data);  // DEBUG
+
+    // ✅ STRICT SUCCESS CHECK [web:36]
+    if (response.status === 200 && response.data.success) {
       const studentData = response.data.data;
       await AsyncStorage.multiSet([
         ['studentId', studentData.studentId || ''],
         ['studentObjectId', studentData.id || ''],
         ['studentData', JSON.stringify(studentData)]
       ]);
-
-      Alert.alert('Success', `Welcome ${studentData.username || studentData.name}!`);
-      navigation.replace('StudentPortal');
+      navigation.replace('StudentPortal');  // ✅ NO ALERT - SILENT NAV
     } else {
-      Alert.alert('Login Failed', response.data.error || 'Unknown error');
+      // ✅ WRONG CREDENTIALS MESSAGE
+      Alert.alert('Login Failed', 'Wrong email or password');
     }
-  } catch (error) {
-    await AsyncStorage.multiRemove(['studentId', 'studentObjectId', 'studentData']);
-    Alert.alert('Login Error', 'Check connection and try again');
+  } catch (error: any) {
+    console.log('❌ LOGIN ERROR:', error.response?.status, error.response?.data);
+    Alert.alert('Login Failed', 'Wrong email or password');  // ✅ SINGLE MESSAGE
   } finally {
     setLoading(false);
   }
 };
+
+
   return (
     <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <StatusBar barStyle="light-content" backgroundColor="#6366f1" />

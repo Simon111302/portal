@@ -14,7 +14,7 @@ const StudentPortalScreen = () => {
   const [refreshing, setRefreshing] = useState(false);
 
   const navigation = useNavigation<any>();
-  const API_URL = 'https://portal-production-26b9.up.railway.app/';
+  const API_URL = 'https://portal-production-26b9.up.railway.app';
 
   useEffect(() => {
     loadStudentData();
