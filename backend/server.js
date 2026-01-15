@@ -201,26 +201,35 @@ app.post('/api/login', async (req, res) => {
 });
 
 
-// ✅ Get attendance by student ObjectId (React Native uses this)
+// In server.js - Replace the /api/attendance/objectId/:objectId route
 app.get('/api/attendance/objectId/:objectId', async (req, res) => {
   try {
     const { objectId } = req.params;
-    console.log('🔍 Fetching for ID:', objectId, 'Valid?', mongoose.Types.ObjectId.isValid(objectId));
+    const { startDate, endDate } = req.query;
 
-    // ✅ EARLY EXIT - NO CRASH
     if (!objectId || !mongoose.Types.ObjectId.isValid(objectId)) {
-      console.log('⚠️ Invalid ID, returning empty');
-      return res.json({
-        success: true,
-        attendance: []
-      });
+      return res.json({ success: true, attendance: [] });
     }
 
-    const records = await Attendance.find({
-      studentId: new mongoose.Types.ObjectId(objectId)
-    }).sort({ timestamp: -1 }).limit(20);
+    let query = { studentId: new mongoose.Types.ObjectId(objectId) };
 
-    console.log(`✅ Found ${records.length} records`);
+    // ✅ IMPROVED: Parse date strings and compare properly
+    if (startDate && endDate) {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999); // Include entire end day
+
+      query.timestamp = {
+        $gte: start,
+        $lte: end
+      };
+    }
+
+    const records = await Attendance.find(query)
+      .sort({ timestamp: -1 })
+      .limit(100);
+
+    console.log(`✅ Found ${records.length} records for date range`);
     res.json({
       success: true,
       attendance: records.map(r => ({
@@ -233,7 +242,7 @@ app.get('/api/attendance/objectId/:objectId', async (req, res) => {
     });
   } catch (error) {
     console.error('🚨 Attendance error:', error.message);
-    res.json({ success: true, attendance: [] });  // Always succeed
+    res.json({ success: true, attendance: [] });
   }
 });
 
@@ -380,12 +389,29 @@ app.get('/api/debug-students', async (req, res) => {
 
 app.get('/api/student-attendance-join/:studentShortId', async (req, res) => {
   try {
-    const shortId = req.params.studentShortId; // e.g., "9"
-    const student = await Student.findOne({ studentId: shortId }); // Custom string ID
+    const shortId = req.params.studentShortId;
+    const { startDate, endDate } = req.query;
+
+    const student = await Student.findOne({ studentId: shortId });
     if (!student) return res.status(404).json({ success: false, error: 'Student not found' });
 
-    const attendances = await Attendance.find({ studentId: student._id })
-      .populate('studentId', 'studentId') // Gets custom studentId
+    let query = { studentId: student._id };
+
+    // ✅ IMPROVED: Date filtering
+    if (startDate && endDate) {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+
+      query.timestamp = {
+        $gte: start,
+        $lte: end
+      };
+    }
+
+    const attendances = await Attendance.find(query)
+      .populate('studentId', 'studentId')
+      .sort({ timestamp: -1 });
 
     res.json({
       success: true,
@@ -399,7 +425,8 @@ app.get('/api/student-attendance-join/:studentShortId', async (req, res) => {
         studentShortId: student.studentId,
         status: a.status,
         date: a.date,
-        subject: a.subject || 'Class'
+        subject: a.subject || 'Class',
+        timestamp: a.timestamp
       }))
     });
   } catch (error) {

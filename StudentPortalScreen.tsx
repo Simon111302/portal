@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ActivityIndicator, FlatList,
-  TouchableOpacity, Alert, RefreshControl, Platform
+  TouchableOpacity, Alert, RefreshControl, Modal, ScrollView
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
@@ -13,6 +13,11 @@ const StudentPortalScreen = () => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
+  // Date filtering states
+  const [startDate, setStartDate] = useState<Date | null>(null);
+  const [endDate, setEndDate] = useState<Date | null>(null);
+  const [showFilterModal, setShowFilterModal] = useState(false);
+
   const navigation = useNavigation<any>();
   const API_URL = 'https://portal-production-26b9.up.railway.app';
 
@@ -20,48 +25,126 @@ const StudentPortalScreen = () => {
     loadStudentData();
   }, []);
 
-const fetchAttendance = async (isRefresh = false) => {
-  if (isRefresh) setRefreshing(true);
-  else setLoading(true);
+  // Date helper functions
+  const formatDate = (date: Date) => {
+    return date.toLocaleDateString('en-US');
+  };
 
-  try {
-    const storageData = await AsyncStorage.multiGet(['studentId', 'studentObjectId']);
-    const studentShortId = storageData[0]?.[1];
-    const studentObjectId = storageData[1]?.[1];
+  const getDatePreset = (preset: string) => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
 
-    console.log('📱 IDs:', { studentShortId, studentObjectId });
+    switch (preset) {
+      case 'today':
+        return { start: today, end: today };
 
-    // Try JOIN first (if short ID exists)
-    if (studentShortId) {
-      const joinUrl = `${API_URL}/api/student-attendance-join/${studentShortId}`;
-      const { data } = await axios.get(joinUrl, { timeout: 10000 });
+      case 'yesterday':
+        const yesterday = new Date(today);
+        yesterday.setDate(yesterday.getDate() - 1);
+        return { start: yesterday, end: yesterday };
 
-      setStudentData(prev => ({ ...prev, studentShortId }));
-      setAttendance(data.attendances || []);
-      return; // Success!
+      case 'lastWeek':
+        const lastWeekStart = new Date(today);
+        lastWeekStart.setDate(lastWeekStart.getDate() - 7);
+        return { start: lastWeekStart, end: today };
+
+      case 'last2Weeks':
+        const last2WeeksStart = new Date(today);
+        last2WeeksStart.setDate(last2WeeksStart.getDate() - 14);
+        return { start: last2WeeksStart, end: today };
+
+      case 'lastMonth':
+        const lastMonthStart = new Date(today);
+        lastMonthStart.setDate(lastMonthStart.getDate() - 30);
+        return { start: lastMonthStart, end: today };
+
+      case 'thisMonth':
+        const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+        return { start: monthStart, end: today };
+
+      default:
+        return { start: null, end: null };
     }
+  };
 
-    // Fallback: ObjectId (always works)
-    throw new Error('No short ID - using ObjectId');
+  const applyPreset = async (preset: string) => {
+    const { start, end } = getDatePreset(preset);
+    setStartDate(start);
+    setEndDate(end);
+    setShowFilterModal(false);
+    await fetchAttendance(false, start, end);
+  };
 
-  } catch (error) {
-    console.log('🔄 Using ObjectId fallback (normal)');
+  const clearFilter = async () => {
+    setStartDate(null);
+    setEndDate(null);
+    setShowFilterModal(false);
+    await fetchAttendance(false, null, null);
+  };
 
-    // Reliable ObjectId fetch (your original method)
-    const storageData = await AsyncStorage.multiGet(['studentObjectId']);
-    const objId = storageData[0]?.[1];
+  const fetchAttendance = async (isRefresh = false, filterStart: Date | null = null, filterEnd: Date | null = null) => {
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
 
-    if (objId) {
-      const { data } = await axios.get(`${API_URL}/api/attendance/objectId/${objId}`, { timeout: 10000 });
-      setAttendance(Array.isArray(data.attendance) ? data.attendance : []);
+    try {
+      const storageData = await AsyncStorage.multiGet(['studentId', 'studentObjectId']);
+      const studentShortId = storageData[0]?.[1];
+      const studentObjectId = storageData[1]?.[1];
+
+      console.log('📱 IDs:', { studentShortId, studentObjectId });
+
+      // Build URL with date filters
+      const useStart = filterStart || startDate;
+      const useEnd = filterEnd || endDate;
+
+      let dateParams = '';
+      if (useStart && useEnd) {
+        const startStr = formatDate(useStart);
+        const endStr = formatDate(useEnd);
+        dateParams = `?startDate=${encodeURIComponent(startStr)}&endDate=${encodeURIComponent(endStr)}`;
+      }
+
+      // Try JOIN first (if short ID exists)
+      if (studentShortId) {
+        const joinUrl = `${API_URL}/api/student-attendance-join/${studentShortId}${dateParams}`;
+        const { data } = await axios.get(joinUrl, { timeout: 10000 });
+
+        setStudentData(prev => ({ ...prev, studentShortId }));
+        setAttendance(data.attendances || []);
+        return; // Success!
+      }
+
+      // Fallback: ObjectId (always works)
+      throw new Error('No short ID - using ObjectId');
+
+    } catch (error) {
+      console.log('🔄 Using ObjectId fallback (normal)');
+
+      // Reliable ObjectId fetch (your original method)
+      const storageData = await AsyncStorage.multiGet(['studentObjectId']);
+      const objId = storageData[0]?.[1];
+
+      if (objId) {
+        const useStart = filterStart || startDate;
+        const useEnd = filterEnd || endDate;
+
+        let url = `${API_URL}/api/attendance/objectId/${objId}`;
+        if (useStart && useEnd) {
+          const startStr = formatDate(useStart);
+          const endStr = formatDate(useEnd);
+          url += `?startDate=${encodeURIComponent(startStr)}&endDate=${encodeURIComponent(endStr)}`;
+        }
+
+        const { data } = await axios.get(url, { timeout: 10000 });
+        setAttendance(Array.isArray(data.attendance) ? data.attendance : []);
+      }
+
+      // SILENT - no more annoying alerts
+    } finally {
+      if (isRefresh) setRefreshing(false);
+      else setLoading(false);
     }
-
-    // SILENT - no more annoying alerts
-  } finally {
-    if (isRefresh) setRefreshing(false);
-    else setLoading(false);
-  }
-};
+  };
 
   const loadStudentData = async () => {
     try {
@@ -98,7 +181,7 @@ const fetchAttendance = async (isRefresh = false) => {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await fetchAttendance(true);
+    await fetchAttendance(true, startDate, endDate);
   };
 
   const handleLogout = async () => {
@@ -119,16 +202,17 @@ const fetchAttendance = async (isRefresh = false) => {
       default: return '#6b7280';
     }
   };
-const renderAttendanceItem = ({ item, index }: any) => (
-  <View style={styles.attendanceCard}>
-    <View style={styles.cardLeft}>
-      <Text style={styles.dateText}>{item.date || 'N/A'}</Text>
+
+  const renderAttendanceItem = ({ item, index }: any) => (
+    <View style={styles.attendanceCard}>
+      <View style={styles.cardLeft}>
+        <Text style={styles.dateText}>{item.date || 'N/A'}</Text>
+      </View>
+      <View style={[styles.statusBadge, { backgroundColor: getStatusColor(item.status) }]}>
+        <Text style={styles.statusText}>{item.status?.toUpperCase() || 'N/A'}</Text>
+      </View>
     </View>
-    <View style={[styles.statusBadge, { backgroundColor: getStatusColor(item.status) }]}>
-      <Text style={styles.statusText}>{item.status?.toUpperCase() || 'N/A'}</Text>
-    </View>
-  </View>
-);
+  );
 
   if (loading && !refreshing && attendance.length === 0) {
     return (
@@ -173,12 +257,31 @@ const renderAttendanceItem = ({ item, index }: any) => (
         </View>
       </View>
 
+      {/* Date Filter Indicator */}
+      {(startDate || endDate) && (
+        <View style={styles.filterIndicator}>
+          <Text style={styles.filterText}>
+            {startDate && endDate
+              ? `${formatDate(startDate)} - ${formatDate(endDate)}`
+              : 'Custom Range'}
+          </Text>
+          <TouchableOpacity onPress={clearFilter}>
+            <Text style={styles.clearFilterText}>✕ Clear</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       <View style={styles.attendanceSection}>
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Attendance History</Text>
-          <TouchableOpacity onPress={onRefresh} style={styles.refreshButton}>
-            <Text style={styles.refreshText}>⟳</Text>
-          </TouchableOpacity>
+          <View style={styles.headerButtons}>
+            <TouchableOpacity onPress={() => setShowFilterModal(true)} style={styles.filterButton}>
+              <Text style={styles.filterButtonText}>📅</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={onRefresh} style={styles.refreshButton}>
+              <Text style={styles.refreshText}>⟳</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {attendance.length === 0 ? (
@@ -205,11 +308,62 @@ const renderAttendanceItem = ({ item, index }: any) => (
           />
         )}
       </View>
+
+      {/* Filter Modal */}
+      <Modal
+        visible={showFilterModal}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowFilterModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <Text style={styles.modalTitle}>Filter Attendance</Text>
+
+              {/* Preset Buttons */}
+              <View style={styles.presetsContainer}>
+                <TouchableOpacity style={styles.presetButton} onPress={() => applyPreset('today')}>
+                  <Text style={styles.presetButtonText}>📅 Today</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.presetButton} onPress={() => applyPreset('yesterday')}>
+                  <Text style={styles.presetButtonText}>📆 Yesterday</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.presetButton} onPress={() => applyPreset('lastWeek')}>
+                  <Text style={styles.presetButtonText}>📊 Last 7 Days</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.presetButton} onPress={() => applyPreset('last2Weeks')}>
+                  <Text style={styles.presetButtonText}>📈 Last 2 Weeks</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.presetButton} onPress={() => applyPreset('lastMonth')}>
+                  <Text style={styles.presetButtonText}>📉 Last 30 Days</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.presetButton} onPress={() => applyPreset('thisMonth')}>
+                  <Text style={styles.presetButtonText}>🗓️ This Month</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Show All Button */}
+              <TouchableOpacity style={styles.showAllButton} onPress={clearFilter}>
+                <Text style={styles.showAllButtonText}>📋 Show All Records</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.closeButton} onPress={() => setShowFilterModal(false)}>
+                <Text style={styles.closeButtonText}>Close</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };
 
-// ✅ UPDATED: Added idText style
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f1f5f9' },
   loadingContainer: {
@@ -259,6 +413,9 @@ const styles = StyleSheet.create({
   statNumber: { fontSize: 28, fontWeight: '700', color: '#6366f1' },
   statLabel: { fontSize: 12, color: '#64748b', marginTop: 4 },
   statDivider: { width: 1, backgroundColor: '#e2e8f0' },
+  filterIndicator: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginHorizontal: 16, marginBottom: 12, padding: 12, backgroundColor: '#e0e7ff', borderRadius: 8 },
+  filterText: { fontSize: 14, fontWeight: '600', color: '#6366f1' },
+  clearFilterText: { fontSize: 14, fontWeight: '600', color: '#ef4444' },
   attendanceSection: { flex: 1, paddingHorizontal: 16 },
   sectionHeader: {
     flexDirection: 'row',
@@ -272,6 +429,9 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#1e293b'
   },
+  headerButtons: { flexDirection: 'row', gap: 8 },
+  filterButton: { padding: 8, backgroundColor: '#e0e7ff', borderRadius: 20, width: 36, height: 36, justifyContent: 'center', alignItems: 'center' },
+  filterButtonText: { fontSize: 18 },
   refreshButton: {
     padding: 8,
     backgroundColor: '#e2e8f0',
@@ -299,7 +459,6 @@ const styles = StyleSheet.create({
   cardLeft: { flex: 1 },
   dateText: { fontSize: 16, fontWeight: '600', color: '#1e293b' },
   subjectText: { fontSize: 14, color: '#64748b', marginTop: 4 },
-  // ✅ NEW: attendancesId style
   idText: {
     fontSize: 11,
     color: '#64748b',
@@ -329,7 +488,17 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontSize: 14
   },
-  listContent: { paddingBottom: 16 }
+  listContent: { paddingBottom: 16 },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  modalContent: { backgroundColor: 'white', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, maxHeight: '70%' },
+  modalTitle: { fontSize: 24, fontWeight: '700', color: '#1e293b', marginBottom: 20 },
+  presetsContainer: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 16 },
+  presetButton: { backgroundColor: '#6366f1', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 12, minWidth: '47%', alignItems: 'center' },
+  presetButtonText: { color: 'white', fontWeight: '600', fontSize: 14 },
+  showAllButton: { backgroundColor: '#10b981', padding: 16, borderRadius: 12, alignItems: 'center', marginTop: 8 },
+  showAllButtonText: { color: 'white', fontWeight: '700', fontSize: 16 },
+  closeButton: { marginTop: 16, padding: 16, backgroundColor: '#f1f5f9', borderRadius: 12, alignItems: 'center' },
+  closeButtonText: { color: '#64748b', fontWeight: '600', fontSize: 16 },
 });
 
 export default StudentPortalScreen;
