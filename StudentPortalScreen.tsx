@@ -82,69 +82,86 @@ const StudentPortalScreen = () => {
     await fetchAttendance(false, null, null);
   };
 
-  const fetchAttendance = async (isRefresh = false, filterStart: Date | null = null, filterEnd: Date | null = null) => {
-    if (isRefresh) setRefreshing(true);
-    else setLoading(true);
+ const fetchAttendance = async (isRefresh = false, filterStart: Date | null = null, filterEnd: Date | null = null) => {
+   if (isRefresh) setRefreshing(true);
+   else setLoading(true);
 
-    try {
-      const storageData = await AsyncStorage.multiGet(['studentId', 'studentObjectId']);
-      const studentShortId = storageData[0]?.[1];
-      const studentObjectId = storageData[1]?.[1];
+   try {
+     const storageData = await AsyncStorage.multiGet(['studentId', 'studentObjectId']);
+     const studentShortId = storageData[0]?.[1];
+     const studentObjectId = storageData[1]?.[1];
 
-      console.log('📱 IDs:', { studentShortId, studentObjectId });
+     console.log('📱 IDs:', { studentShortId, studentObjectId });
 
-      // Build URL with date filters
-      const useStart = filterStart || startDate;
-      const useEnd = filterEnd || endDate;
+     // ✅ ALWAYS FETCH ALL RECORDS (no date params in URL)
+     let allRecords: any[] = [];
 
-      let dateParams = '';
-      if (useStart && useEnd) {
-        const startStr = formatDate(useStart);
-        const endStr = formatDate(useEnd);
-        dateParams = `?startDate=${encodeURIComponent(startStr)}&endDate=${encodeURIComponent(endStr)}`;
-      }
+     // Try JOIN first (if short ID exists)
+     if (studentShortId) {
+       const joinUrl = `${API_URL}/api/student-attendance-join/${studentShortId}`;
+       const { data } = await axios.get(joinUrl, { timeout: 10000 });
+       setStudentData(prev => ({ ...prev, studentShortId }));
+       allRecords = data.attendances || [];
+     } else {
+       // Fallback: ObjectId
+       const objId = studentObjectId;
+       if (objId) {
+         const url = `${API_URL}/api/attendance/objectId/${objId}`;
+         const { data } = await axios.get(url, { timeout: 10000 });
+         allRecords = Array.isArray(data.attendance) ? data.attendance : [];
+       }
+     }
 
-      // Try JOIN first (if short ID exists)
-      if (studentShortId) {
-        const joinUrl = `${API_URL}/api/student-attendance-join/${studentShortId}${dateParams}`;
-        const { data } = await axios.get(joinUrl, { timeout: 10000 });
+     // ✅ FILTER ON FRONTEND (More reliable)
+     const useStart = filterStart || startDate;
+     const useEnd = filterEnd || endDate;
 
-        setStudentData(prev => ({ ...prev, studentShortId }));
-        setAttendance(data.attendances || []);
-        return; // Success!
-      }
+     if (useStart && useEnd) {
+       const startTime = new Date(useStart).setHours(0, 0, 0, 0);
+       const endTime = new Date(useEnd).setHours(23, 59, 59, 999);
 
-      // Fallback: ObjectId (always works)
-      throw new Error('No short ID - using ObjectId');
+       console.log('🔍 Filtering:', {
+         start: new Date(startTime).toLocaleDateString(),
+         end: new Date(endTime).toLocaleDateString()
+       });
 
-    } catch (error) {
-      console.log('🔄 Using ObjectId fallback (normal)');
+       const filtered = allRecords.filter((record: any) => {
+         // Try parsing timestamp first
+         let recordDate = new Date(record.timestamp || record.date);
 
-      // Reliable ObjectId fetch (your original method)
-      const storageData = await AsyncStorage.multiGet(['studentObjectId']);
-      const objId = storageData[0]?.[1];
+         // If invalid, try parsing date string directly
+         if (isNaN(recordDate.getTime())) {
+           // Handle formats like "1/15/2026"
+           recordDate = new Date(record.date);
+         }
 
-      if (objId) {
-        const useStart = filterStart || startDate;
-        const useEnd = filterEnd || endDate;
+         const recordTime = recordDate.getTime();
 
-        let url = `${API_URL}/api/attendance/objectId/${objId}`;
-        if (useStart && useEnd) {
-          const startStr = formatDate(useStart);
-          const endStr = formatDate(useEnd);
-          url += `?startDate=${encodeURIComponent(startStr)}&endDate=${encodeURIComponent(endStr)}`;
-        }
+         console.log('📅 Comparing:', {
+           recordDate: recordDate.toLocaleDateString(),
+           recordTime,
+           inRange: recordTime >= startTime && recordTime <= endTime
+         });
 
-        const { data } = await axios.get(url, { timeout: 10000 });
-        setAttendance(Array.isArray(data.attendance) ? data.attendance : []);
-      }
+         return recordTime >= startTime && recordTime <= endTime;
+       });
 
-      // SILENT - no more annoying alerts
-    } finally {
-      if (isRefresh) setRefreshing(false);
-      else setLoading(false);
-    }
-  };
+       console.log(`✅ Filtered: ${filtered.length} of ${allRecords.length} records`);
+       setAttendance(filtered);
+     } else {
+       // No filter - show all
+       setAttendance(allRecords);
+     }
+
+   } catch (error) {
+     console.log('🚨 Fetch error:', error);
+     setAttendance([]);
+   } finally {
+     if (isRefresh) setRefreshing(false);
+     else setLoading(false);
+   }
+ };
+
 
   const loadStudentData = async () => {
     try {
