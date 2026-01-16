@@ -395,24 +395,13 @@ app.get('/api/debug-students', async (req, res) => {
 app.get('/api/student-attendance-join/:studentShortId', async (req, res) => {
   try {
     const shortId = req.params.studentShortId;
-    const { startDate, endDate } = req.query;
 
     const student = await Student.findOne({ studentId: shortId });
     if (!student) return res.status(404).json({ success: false, error: 'Student not found' });
 
     let query = { studentId: student._id };
 
-    // ✅ IMPROVED: Date filtering
-    if (startDate && endDate) {
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-      end.setHours(23, 59, 59, 999);
-
-      query.timestamp = {
-        $gte: start,
-        $lte: end
-      };
-    }
+    // ✅ NO DATE FILTERING - Return all records
 
     const attendances = await Attendance.find(query)
       .populate('studentId', 'studentId')

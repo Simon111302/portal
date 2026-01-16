@@ -91,28 +91,30 @@ const StudentPortalScreen = () => {
      const studentShortId = storageData[0]?.[1];
      const studentObjectId = storageData[1]?.[1];
 
-     console.log('📱 IDs:', { studentShortId, studentObjectId });
+     console.log('📱 Storage IDs:', { studentShortId, studentObjectId });
 
-     // ✅ ALWAYS FETCH ALL RECORDS (no date params in URL)
      let allRecords: any[] = [];
 
-     // Try JOIN first (if short ID exists)
      if (studentShortId) {
        const joinUrl = `${API_URL}/api/student-attendance-join/${studentShortId}`;
+       console.log('🌐 Fetching from:', joinUrl);
        const { data } = await axios.get(joinUrl, { timeout: 10000 });
        setStudentData(prev => ({ ...prev, studentShortId }));
        allRecords = data.attendances || [];
      } else {
-       // Fallback: ObjectId
        const objId = studentObjectId;
        if (objId) {
          const url = `${API_URL}/api/attendance/objectId/${objId}`;
+         console.log('🌐 Fetching from:', url);
          const { data } = await axios.get(url, { timeout: 10000 });
          allRecords = Array.isArray(data.attendance) ? data.attendance : [];
        }
      }
 
-     // ✅ FILTER ON FRONTEND (More reliable)
+     // ✅ DEBUG: Log ALL records received
+     console.log('📦 TOTAL RECORDS RECEIVED:', allRecords.length);
+     console.log('📦 SAMPLE RECORDS:', JSON.stringify(allRecords.slice(0, 3), null, 2));
+
      const useStart = filterStart || startDate;
      const useEnd = filterEnd || endDate;
 
@@ -120,48 +122,58 @@ const StudentPortalScreen = () => {
        const startTime = new Date(useStart).setHours(0, 0, 0, 0);
        const endTime = new Date(useEnd).setHours(23, 59, 59, 999);
 
-       console.log('🔍 Filtering:', {
-         start: new Date(startTime).toLocaleDateString(),
-         end: new Date(endTime).toLocaleDateString()
-       });
+       console.log('🔍 FILTER RANGE:');
+       console.log('  Start:', new Date(startTime).toISOString());
+       console.log('  End:', new Date(endTime).toISOString());
 
        const filtered = allRecords.filter((record: any) => {
-         // Try parsing timestamp first
-         let recordDate = new Date(record.timestamp || record.date);
+         let recordDate: Date;
 
-         // If invalid, try parsing date string directly
-         if (isNaN(recordDate.getTime())) {
-           // Handle formats like "1/15/2026"
-           recordDate = new Date(record.date);
+         // Parse date correctly
+         if (record.date && typeof record.date === 'string') {
+           const parts = record.date.split('/');
+           if (parts.length === 3) {
+             const month = parseInt(parts[0]) - 1;
+             const day = parseInt(parts[1]);
+             const year = parseInt(parts[2]);
+             recordDate = new Date(year, month, day);
+             console.log(`  📅 Parsing "${record.date}" → ${recordDate.toLocaleDateString()}`);
+           } else {
+             recordDate = new Date(record.timestamp);
+             console.log(`  ⏰ Using timestamp → ${recordDate.toLocaleDateString()}`);
+           }
+         } else if (record.timestamp) {
+           recordDate = new Date(record.timestamp);
+           console.log(`  ⏰ Using timestamp → ${recordDate.toLocaleDateString()}`);
+         } else {
+           console.log(`  ❌ No date or timestamp found in record:`, record);
+           return false;
          }
 
-         const recordTime = recordDate.getTime();
+         const recordTime = new Date(recordDate).setHours(0, 0, 0, 0);
+         const isInRange = recordTime >= startTime && recordTime <= endTime;
 
-         console.log('📅 Comparing:', {
-           recordDate: recordDate.toLocaleDateString(),
-           recordTime,
-           inRange: recordTime >= startTime && recordTime <= endTime
-         });
+         console.log(`  ${isInRange ? '✅' : '❌'} Record: ${new Date(recordTime).toLocaleDateString()} (${recordTime}) ${isInRange ? 'MATCHES' : 'OUTSIDE RANGE'}`);
 
-         return recordTime >= startTime && recordTime <= endTime;
+         return isInRange;
        });
 
-       console.log(`✅ Filtered: ${filtered.length} of ${allRecords.length} records`);
+       console.log(`✅ FILTERED RESULT: ${filtered.length} of ${allRecords.length} records`);
        setAttendance(filtered);
      } else {
-       // No filter - show all
+       console.log('📋 NO FILTER - Showing all records');
        setAttendance(allRecords);
      }
 
-   } catch (error) {
-     console.log('🚨 Fetch error:', error);
+   } catch (error: any) {
+     console.log('🚨 FETCH ERROR:', error.message);
+     console.log('🚨 ERROR DETAILS:', error.response?.data);
      setAttendance([]);
    } finally {
      if (isRefresh) setRefreshing(false);
      else setLoading(false);
    }
  };
-
 
   const loadStudentData = async () => {
     try {
