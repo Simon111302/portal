@@ -83,100 +83,117 @@ const StudentPortalScreen = () => {
   };
 
  const fetchAttendance = async (isRefresh = false, filterStart: Date | null = null, filterEnd: Date | null = null) => {
-   if (isRefresh) setRefreshing(true);
-   else setLoading(true);
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
 
-   try {
-     const storageData = await AsyncStorage.multiGet(['studentId', 'studentObjectId']);
-     const studentShortId = storageData[0]?.[1];
-     const studentObjectId = storageData[1]?.[1];
+    try {
+      const storageData = await AsyncStorage.multiGet(['studentId', 'studentObjectId']);
+      const studentShortId = storageData[0]?.[1];
+      const studentObjectId = storageData[1]?.[1];
 
-     console.log('📱 IDs:', { studentShortId, studentObjectId });
+      Alert.alert('Step 4', `IDs found:\nShort: ${studentShortId || 'None'}\nObj: ${studentObjectId || 'None'}`);
 
-     let allRecords: any[] = [];
+      let allRecords: any[] = [];
 
-     // Fetch all records (no date filter in URL)
-     if (studentShortId) {
-       const joinUrl = `${API_URL}/api/student-attendance-join/${studentShortId}`;
-       console.log('🌐 Fetching:', joinUrl);
-       const { data } = await axios.get(joinUrl, { timeout: 10000 });
-       setStudentData(prev => ({ ...prev, studentShortId }));
-       allRecords = data.attendances || [];
-     } else {
-       const objId = studentObjectId;
-       if (objId) {
-         const url = `${API_URL}/api/attendance/objectId/${objId}`;
-         console.log('🌐 Fetching:', url);
-         const { data } = await axios.get(url, { timeout: 10000 });
-         allRecords = Array.isArray(data.attendance) ? data.attendance : [];
-       }
-     }
+      if (studentShortId) {
+        const joinUrl = `${API_URL}/api/student-attendance-join/${studentShortId}`;
+        Alert.alert('Step 5', `Fetching from:\n${joinUrl}`);
+        const response = await axios.get(joinUrl, { timeout: 10000 });
 
-     console.log('📦 Total records from backend:', allRecords.length);
-     if (allRecords.length > 0) {
-       console.log('📦 Sample record:', allRecords[0]);
-     }
+        console.log('📦 RAW RESPONSE:', JSON.stringify(response.data, null, 2));
 
-     // ✅ FILTER ON FRONTEND
-     const useStart = filterStart || startDate;
-     const useEnd = filterEnd || endDate;
+        setStudentData(prev => ({ ...prev, studentShortId }));
+        allRecords = response.data.attendances || [];
+      } else if (studentObjectId) {
+        const url = `${API_URL}/api/attendance/objectId/${studentObjectId}`;
+        Alert.alert('Step 5', `Fetching from:\n${url}`);
+        const response = await axios.get(url, { timeout: 10000 });
 
-     if (useStart && useEnd) {
-       const startTime = new Date(useStart).setHours(0, 0, 0, 0);
-       const endTime = new Date(useEnd).setHours(23, 59, 59, 999);
+        console.log('📦 RAW RESPONSE:', JSON.stringify(response.data, null, 2));
 
-       console.log('🔍 Filtering between:', {
-         start: new Date(startTime).toLocaleDateString(),
-         end: new Date(endTime).toLocaleDateString()
-       });
+        allRecords = Array.isArray(response.data.attendance) ? response.data.attendance : [];
+      } else {
+        Alert.alert('Error', 'No IDs found in storage');
+        setAttendance([]);
+        return;
+      }
 
-       const filtered = allRecords.filter((record: any) => {
-         let recordDate: Date;
+      // ✅ NEW: Show what backend returned
+      Alert.alert(
+        'Step 6 - Backend Data',
+        `Total: ${allRecords.length} records\n\n${allRecords.length > 0 ? `First record:\nDate: ${allRecords[0].date}\nStatus: ${allRecords[0].status}\nTimestamp: ${allRecords[0].timestamp}` : 'No records found!'}`
+      );
 
-         // ✅ Parse US date format "M/D/YYYY"
-         if (record.date && typeof record.date === 'string') {
-           const parts = record.date.split('/');
-           if (parts.length === 3) {
-             const month = parseInt(parts[0]) - 1; // 0-indexed
-             const day = parseInt(parts[1]);
-             const year = parseInt(parts[2]);
-             recordDate = new Date(year, month, day);
-           } else {
-             // Fallback to timestamp
-             recordDate = new Date(record.timestamp);
-           }
-         } else if (record.timestamp) {
-           recordDate = new Date(record.timestamp);
-         } else {
-           console.log('❌ No valid date in record:', record);
-           return false;
-         }
+      if (allRecords.length === 0) {
+        Alert.alert('Warning', 'Backend returned 0 records!\n\nCreate test attendance data first.');
+        setAttendance([]);
+        return;
+      }
 
-         const recordTime = new Date(recordDate).setHours(0, 0, 0, 0);
+      // ✅ Use filterStart/filterEnd directly (not state variables)
+      if (filterStart && filterEnd) {
+        const startTime = new Date(filterStart).setHours(0, 0, 0, 0);
+        const endTime = new Date(filterEnd).setHours(23, 59, 59, 999);
 
-         const isInRange = recordTime >= startTime && recordTime <= endTime;
+        Alert.alert(
+          'Step 7 - Filter Range',
+          `Filtering:\nStart: ${new Date(startTime).toLocaleDateString()}\nEnd: ${new Date(endTime).toLocaleDateString()}\n\nStart timestamp: ${startTime}\nEnd timestamp: ${endTime}`
+        );
 
-         console.log(`${isInRange ? '✅' : '❌'} ${record.date} → ${new Date(recordTime).toLocaleDateString()} ${isInRange ? 'MATCH' : 'SKIP'}`);
+        const filtered = allRecords.filter((record: any) => {
+          let recordDate: Date;
 
-         return isInRange;
-       });
+          // Parse date string
+          if (record.date && typeof record.date === 'string') {
+            const parts = record.date.split('/');
+            if (parts.length === 3) {
+              // "1/15/2026" format
+              const month = parseInt(parts[0]) - 1;
+              const day = parseInt(parts[1]);
+              const year = parseInt(parts[2]);
+              recordDate = new Date(year, month, day);
+            } else {
+              // Fallback to timestamp parsing
+              recordDate = new Date(record.date);
+            }
+          } else if (record.timestamp) {
+            recordDate = new Date(record.timestamp);
+          } else {
+            console.log('❌ Record has no date/timestamp:', record);
+            return false;
+          }
 
-       console.log(`✅ Filtered: ${filtered.length} of ${allRecords.length} records`);
-       setAttendance(filtered);
-     } else {
-       console.log('📋 No filter - showing all records');
-       setAttendance(allRecords);
-     }
+          const recordTime = new Date(recordDate).setHours(0, 0, 0, 0);
+          const isInRange = recordTime >= startTime && recordTime <= endTime;
 
-   } catch (error: any) {
-     console.log('🚨 Fetch error:', error.message);
-     setAttendance([]);
-   } finally {
-     if (isRefresh) setRefreshing(false);
-     else setLoading(false);
-   }
- };
+          // Log first 3 comparisons
+          if (filtered.length < 3) {
+            console.log(`🔍 Comparing: ${record.date} (${recordTime}) vs Range (${startTime}-${endTime}) = ${isInRange ? 'MATCH ✅' : 'NO MATCH ❌'}`);
+          }
 
+          return isInRange;
+        });
+
+        Alert.alert(
+          'Step 8 - RESULT',
+          `Filtered: ${filtered.length} of ${allRecords.length} records\n\n${filtered.length > 0 ? `First match:\n${filtered[0].date} - ${filtered[0].status}` : 'No records match the date range!'}`
+        );
+
+        setAttendance(filtered);
+      } else {
+        Alert.alert('Step 7', `No filter - showing all ${allRecords.length} records`);
+        setAttendance(allRecords);
+      }
+
+    } catch (error: any) {
+      Alert.alert('ERROR', `${error.message}\n\nCheck:\n1. Backend deployed?\n2. Network connection?`);
+      console.error('🚨 Full error:', error);
+      setAttendance([]);
+    } finally {
+      if (isRefresh) setRefreshing(false);
+      else setLoading(false);
+    }
+  };
 
   const loadStudentData = async () => {
     try {
