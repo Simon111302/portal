@@ -12,7 +12,7 @@ app.use(cors({
   origin: [
     'http://localhost:8081',
     'http://10.0.2.2:8081',
-    'https://portal-production-26b9.up.railway.app'  // Add this
+    'https://portal-production-26b9.up.railway.app'
   ],
   credentials: true
 }));
@@ -113,6 +113,7 @@ studentSchema.pre('save', function(next) {
 });
 
 const Student = mongoose.model('Student', studentSchema, 'Student');
+
 app.post('/api/link-all-records', async (req, res) => {
   try {
     const { studentEmail } = req.body;
@@ -142,9 +143,6 @@ app.post('/api/link-all-records', async (req, res) => {
   }
 });
 
-
-
-
 app.post('/api/login', async (req, res) => {
   try {
     console.log('LOGIN ATTEMPT:', req.body.email);
@@ -159,7 +157,7 @@ app.post('/api/login', async (req, res) => {
     // ✅ FIND EXISTING STUDENT
     let student = await Student.findOne({ email: emailLower }).select('+password');
 
-    // ✅ PASSWORD CHECK REQUIRED [web:62]
+    // ✅ PASSWORD CHECK REQUIRED
     if (student) {
       // VALIDATE PASSWORD
       const isMatch = await bcrypt.compare(password, student.password);
@@ -175,7 +173,7 @@ app.post('/api/login', async (req, res) => {
         studentId: `STU${Date.now().toString().slice(-6)}`,
         name: emailLower.split('@')[0].replace(/[^a-zA-Z]/g, '').charAt(0).toUpperCase() + emailLower.split('@')[0].replace(/[^a-zA-Z]/g, '').slice(1),
         email: emailLower,
-        password: await bcrypt.hash(password, 12),  // ✅ HASH IT!
+        password: await bcrypt.hash(password, 12),
         grade: 'Grade 10'
       });
       await student.save();
@@ -200,7 +198,6 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-
 app.get('/api/attendance/objectId/:objectId', async (req, res) => {
   try {
     const { objectId } = req.params;
@@ -210,9 +207,6 @@ app.get('/api/attendance/objectId/:objectId', async (req, res) => {
     }
 
     let query = { studentId: new mongoose.Types.ObjectId(objectId) };
-
-    // ✅ NO DATE FILTERING - Return all records
-    // Frontend will filter by parsing the date string
 
     const records = await Attendance.find(query)
       .sort({ timestamp: -1 })
@@ -224,7 +218,7 @@ app.get('/api/attendance/objectId/:objectId', async (req, res) => {
       success: true,
       attendance: records.map(r => ({
         id: r._id.toString(),
-        date: r.date,
+        date: typeof r.date === 'string' ? r.date : new Date(r.date).toLocaleDateString('en-US'),  // ✅ FIX
         status: r.status,
         subject: r.subject || 'Class',
         timestamp: r.timestamp
@@ -235,6 +229,7 @@ app.get('/api/attendance/objectId/:objectId', async (req, res) => {
     res.json({ success: true, attendance: [] });
   }
 });
+
 // 📋 Get all students with JOIN
 app.get('/api/students', async (req, res) => {
   try {
@@ -281,28 +276,24 @@ app.get('/api/students/:id', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-// Add to your existing server.js AFTER auth routes
 
 // UPDATED: Real login with attendance (replace demo login)
 app.post('/api/auth/login', async (req, res) => {
   try {
     console.log('Login:', req.body.email);
 
-    // Demo for now - REPLACE with real User model when ready
     const { email } = req.body;
 
-    // Simulate finding student by email (in production: User.findOne + Student.findOne({email}))
     const student = await Student.findOne({ email }).lean();
     let attendance = null;
 
     if (student) {
-      // Get latest attendance
       attendance = await Attendance.findOne({ studentId: student._id })
         .sort({ date: -1 })
         .lean();
     }
 
-    const token = 'demo-jwt-token-' + Date.now();  // Real JWT later
+    const token = 'demo-jwt-token-' + Date.now();
 
     res.json({
       success: true,
@@ -311,8 +302,8 @@ app.post('/api/auth/login', async (req, res) => {
         name: 'Student User',
         email,
         token,
-        studentId: student?._id,  // Custom ID
-        studentObjectId: student?._id.toString(),  // For RN AsyncStorage
+        studentId: student?._id,
+        studentObjectId: student?._id.toString(),
         attendancesId: attendance?._id?.toString() || null,
         latestAttendance: attendance?.status || null
       }
@@ -322,28 +313,22 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// NEW: Flexible attendance route for web/mobile
-// ADD THIS EXACT ROUTE to your existing server.js (after other routes)
 app.get('/api/attendance/:id', async (req, res) => {
   try {
     const { id } = req.params;
 
-    // NEW: Validate ObjectId OR treat as custom ID
     const mongoose = require('mongoose');
     const ObjectId = mongoose.Types.ObjectId;
 
     let records = [];
 
     if (ObjectId.isValid(id)) {
-      // Valid ObjectId → studentId query
       records = await Attendance.find({ studentId: id })
         .sort({ date: -1 })
         .limit(50)
         .lean();
     } else {
       console.log('📱 Custom ID detected:', id);
-      // Custom ID → maybe username/email? Add your logic
-      // For now return empty or find by username:
       const student = await Student.findOne({ username: id }).lean();
       if (student) {
         records = await Attendance.find({ studentId: student._id })
@@ -358,7 +343,7 @@ app.get('/api/attendance/:id', async (req, res) => {
       attendance: records.map(r => ({
         id: r._id.toString(),
         status: r.status,
-        date: r.date.toISOString().split('T')[0],
+        date: typeof r.date === 'string' ? r.date : new Date(r.date).toLocaleDateString('en-US'),  // ✅ FIX
         subject: 'Class'
       }))
     });
@@ -366,11 +351,12 @@ app.get('/api/attendance/:id', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
 app.get('/api/debug-students', async (req, res) => {
   const students = await Student.find({}, '_id studentId email name');
   res.json({ students: students.map(s => ({
-    mongoId: s._id.toString(),    // ✅ 24 chars "66bb..."
-    studentId: s.studentId,       // "STU001"
+    mongoId: s._id.toString(),
+    studentId: s.studentId,
     email: s.email
   })) });
 });
@@ -383,8 +369,6 @@ app.get('/api/student-attendance-join/:studentShortId', async (req, res) => {
     if (!student) return res.status(404).json({ success: false, error: 'Student not found' });
 
     let query = { studentId: student._id };
-
-    // ✅ NO DATE FILTERING - Return all records
 
     const attendances = await Attendance.find(query)
       .populate('studentId', 'studentId')
@@ -401,7 +385,7 @@ app.get('/api/student-attendance-join/:studentShortId', async (req, res) => {
         studentObjectId: student._id.toString(),
         studentShortId: student.studentId,
         status: a.status,
-        date: a.date,
+        date: typeof a.date === 'string' ? a.date : new Date(a.date).toLocaleDateString('en-US'),  // ✅ FIX
         subject: a.subject || 'Class',
         timestamp: a.timestamp
       }))
@@ -411,9 +395,8 @@ app.get('/api/student-attendance-join/:studentShortId', async (req, res) => {
   }
 });
 
-
 // 🔍 DEBUG: View all students + attendance counts
-app.get('/api/debug-students', async (req, res) => {
+app.get('/api/debug-students-full', async (req, res) => {
   try {
     const students = await Student.find()
       .populate('attendance', 'status date subject')
