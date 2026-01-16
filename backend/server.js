@@ -204,9 +204,6 @@ app.post('/api/login', async (req, res) => {
 app.get('/api/attendance/objectId/:objectId', async (req, res) => {
   try {
     const { objectId } = req.params;
-    const { startDate, endDate } = req.query;
-
-    console.log('📅 Filter params:', { startDate, endDate }); // DEBUG
 
     if (!objectId || !mongoose.Types.ObjectId.isValid(objectId)) {
       return res.json({ success: true, attendance: [] });
@@ -214,25 +211,14 @@ app.get('/api/attendance/objectId/:objectId', async (req, res) => {
 
     let query = { studentId: new mongoose.Types.ObjectId(objectId) };
 
-    if (startDate && endDate) {
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-      end.setHours(23, 59, 59, 999);
-
-      console.log('🔍 Date range:', { start, end }); // DEBUG
-
-      query.timestamp = {
-        $gte: start,
-        $lte: end
-      };
-    }
+    // ✅ NO DATE FILTERING - Return all records
+    // Frontend will filter by parsing the date string
 
     const records = await Attendance.find(query)
       .sort({ timestamp: -1 })
       .limit(100);
 
-    console.log(`✅ Found ${records.length} records`); // DEBUG
-    console.log('📋 Sample record:', records[0]); // DEBUG - See actual data format
+    console.log(`✅ Found ${records.length} records for ${objectId}`);
 
     res.json({
       success: true,
@@ -249,9 +235,6 @@ app.get('/api/attendance/objectId/:objectId', async (req, res) => {
     res.json({ success: true, attendance: [] });
   }
 });
-
-
-
 // 📋 Get all students with JOIN
 app.get('/api/students', async (req, res) => {
   try {
