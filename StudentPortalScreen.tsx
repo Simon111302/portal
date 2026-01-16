@@ -10,6 +10,7 @@ import { useNavigation } from '@react-navigation/native';
 const StudentPortalScreen = () => {
   const [studentData, setStudentData] = useState<any>(null);
   const [attendance, setAttendance] = useState([]);
+  const [allAttendance, setAllAttendance] = useState([]); // ✅ Store all records
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -17,6 +18,7 @@ const StudentPortalScreen = () => {
   const [startDate, setStartDate] = useState<Date | null>(null);
   const [endDate, setEndDate] = useState<Date | null>(null);
   const [showFilterModal, setShowFilterModal] = useState(false);
+  const [activeFilter, setActiveFilter] = useState<string>('all'); // ✅ Track active filter
 
   const navigation = useNavigation<any>();
   const API_URL = 'https://portal-production-26b9.up.railway.app';
@@ -71,18 +73,59 @@ const StudentPortalScreen = () => {
     const { start, end } = getDatePreset(preset);
     setStartDate(start);
     setEndDate(end);
+    setActiveFilter(preset); // ✅ Save active filter
     setShowFilterModal(false);
-    await fetchAttendance(false, start, end);
+    await filterAttendance(start, end);
   };
 
   const clearFilter = async () => {
     setStartDate(null);
     setEndDate(null);
+    setActiveFilter('all'); // ✅ Reset to 'all'
     setShowFilterModal(false);
-    await fetchAttendance(false, null, null);
+    setAttendance(allAttendance); // ✅ Restore all records
   };
 
- const fetchAttendance = async (isRefresh = false, filterStart: Date | null = null, filterEnd: Date | null = null) => {
+  // ✅ NEW: Separate filter function (doesn't fetch, just filters existing data)
+  const filterAttendance = async (filterStart: Date | null, filterEnd: Date | null) => {
+    if (!filterStart || !filterEnd) {
+      setAttendance(allAttendance);
+      return;
+    }
+
+    const startTime = new Date(filterStart).setHours(0, 0, 0, 0);
+    const endTime = new Date(filterEnd).setHours(23, 59, 59, 999);
+
+    console.log('🔍 Filtering:', new Date(startTime).toLocaleDateString(), 'to', new Date(endTime).toLocaleDateString());
+
+    const filtered = allAttendance.filter((record: any) => {
+      let recordDate: Date;
+
+      if (record.date && typeof record.date === 'string') {
+        const parts = record.date.split('/');
+        if (parts.length === 3) {
+          const month = parseInt(parts[0]) - 1;
+          const day = parseInt(parts[1]);
+          const year = parseInt(parts[2]);
+          recordDate = new Date(year, month, day);
+        } else {
+          recordDate = new Date(record.date);
+        }
+      } else if (record.timestamp) {
+        recordDate = new Date(record.timestamp);
+      } else {
+        return false;
+      }
+
+      const recordTime = new Date(recordDate).setHours(0, 0, 0, 0);
+      return recordTime >= startTime && recordTime <= endTime;
+    });
+
+    console.log(`✅ Filtered: ${filtered.length} of ${allAttendance.length}`);
+    setAttendance(filtered);
+  };
+
+  const fetchAttendance = async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
 
@@ -91,104 +134,68 @@ const StudentPortalScreen = () => {
       const studentShortId = storageData[0]?.[1];
       const studentObjectId = storageData[1]?.[1];
 
-      Alert.alert('Step 4', `IDs found:\nShort: ${studentShortId || 'None'}\nObj: ${studentObjectId || 'None'}`);
+      console.log('🔍 IDs:', { studentShortId, studentObjectId });
 
       let allRecords: any[] = [];
 
       if (studentShortId) {
         const joinUrl = `${API_URL}/api/student-attendance-join/${studentShortId}`;
-        Alert.alert('Step 5', `Fetching from:\n${joinUrl}`);
-        const response = await axios.get(joinUrl, { timeout: 10000 });
+        console.log('📡 Fetching:', joinUrl);
 
-        console.log('📦 RAW RESPONSE:', JSON.stringify(response.data, null, 2));
+        const response = await axios.get(joinUrl, { timeout: 10000 });
+        console.log('📦 Response:', JSON.stringify(response.data, null, 2));
+
+        if (response.data && Array.isArray(response.data.attendances)) {
+          allRecords = response.data.attendances;
+        } else {
+          console.log('⚠️ Unexpected response format:', response.data);
+          allRecords = [];
+        }
 
         setStudentData(prev => ({ ...prev, studentShortId }));
-        allRecords = response.data.attendances || [];
+
       } else if (studentObjectId) {
         const url = `${API_URL}/api/attendance/objectId/${studentObjectId}`;
-        Alert.alert('Step 5', `Fetching from:\n${url}`);
+        console.log('📡 Fetching:', url);
+
         const response = await axios.get(url, { timeout: 10000 });
+        console.log('📦 Response:', JSON.stringify(response.data, null, 2));
 
-        console.log('📦 RAW RESPONSE:', JSON.stringify(response.data, null, 2));
+        if (response.data && Array.isArray(response.data.attendance)) {
+          allRecords = response.data.attendance;
+        } else {
+          console.log('⚠️ Unexpected response format:', response.data);
+          allRecords = [];
+        }
 
-        allRecords = Array.isArray(response.data.attendance) ? response.data.attendance : [];
       } else {
         Alert.alert('Error', 'No IDs found in storage');
         setAttendance([]);
+        setAllAttendance([]);
         return;
       }
 
-      // ✅ NEW: Show what backend returned
-      Alert.alert(
-        'Step 6 - Backend Data',
-        `Total: ${allRecords.length} records\n\n${allRecords.length > 0 ? `First record:\nDate: ${allRecords[0].date}\nStatus: ${allRecords[0].status}\nTimestamp: ${allRecords[0].timestamp}` : 'No records found!'}`
-      );
+      console.log('📊 Total records:', allRecords.length);
 
-      if (allRecords.length === 0) {
-        Alert.alert('Warning', 'Backend returned 0 records!\n\nCreate test attendance data first.');
-        setAttendance([]);
-        return;
-      }
+      // ✅ Store all records
+      setAllAttendance(allRecords);
 
-      // ✅ Use filterStart/filterEnd directly (not state variables)
-      if (filterStart && filterEnd) {
-        const startTime = new Date(filterStart).setHours(0, 0, 0, 0);
-        const endTime = new Date(filterEnd).setHours(23, 59, 59, 999);
-
-        Alert.alert(
-          'Step 7 - Filter Range',
-          `Filtering:\nStart: ${new Date(startTime).toLocaleDateString()}\nEnd: ${new Date(endTime).toLocaleDateString()}\n\nStart timestamp: ${startTime}\nEnd timestamp: ${endTime}`
-        );
-
-        const filtered = allRecords.filter((record: any) => {
-          let recordDate: Date;
-
-          // Parse date string
-          if (record.date && typeof record.date === 'string') {
-            const parts = record.date.split('/');
-            if (parts.length === 3) {
-              // "1/15/2026" format
-              const month = parseInt(parts[0]) - 1;
-              const day = parseInt(parts[1]);
-              const year = parseInt(parts[2]);
-              recordDate = new Date(year, month, day);
-            } else {
-              // Fallback to timestamp parsing
-              recordDate = new Date(record.date);
-            }
-          } else if (record.timestamp) {
-            recordDate = new Date(record.timestamp);
-          } else {
-            console.log('❌ Record has no date/timestamp:', record);
-            return false;
-          }
-
-          const recordTime = new Date(recordDate).setHours(0, 0, 0, 0);
-          const isInRange = recordTime >= startTime && recordTime <= endTime;
-
-          // Log first 3 comparisons
-          if (filtered.length < 3) {
-            console.log(`🔍 Comparing: ${record.date} (${recordTime}) vs Range (${startTime}-${endTime}) = ${isInRange ? 'MATCH ✅' : 'NO MATCH ❌'}`);
-          }
-
-          return isInRange;
-        });
-
-        Alert.alert(
-          'Step 8 - RESULT',
-          `Filtered: ${filtered.length} of ${allRecords.length} records\n\n${filtered.length > 0 ? `First match:\n${filtered[0].date} - ${filtered[0].status}` : 'No records match the date range!'}`
-        );
-
-        setAttendance(filtered);
+      // ✅ Apply current filter if active
+      if (startDate && endDate) {
+        await filterAttendance(startDate, endDate);
       } else {
-        Alert.alert('Step 7', `No filter - showing all ${allRecords.length} records`);
         setAttendance(allRecords);
       }
 
     } catch (error: any) {
-      Alert.alert('ERROR', `${error.message}\n\nCheck:\n1. Backend deployed?\n2. Network connection?`);
-      console.error('🚨 Full error:', error);
+      console.error('❌ Error:', error.message);
+      Alert.alert(
+        'Connection Error',
+        `Failed to load attendance data.\n\n${error.message}`,
+        [{ text: 'OK' }]
+      );
       setAttendance([]);
+      setAllAttendance([]);
     } finally {
       if (isRefresh) setRefreshing(false);
       else setLoading(false);
@@ -230,7 +237,7 @@ const StudentPortalScreen = () => {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await fetchAttendance(true, startDate, endDate);
+    await fetchAttendance(true);
   };
 
   const handleLogout = async () => {
@@ -288,7 +295,9 @@ const StudentPortalScreen = () => {
       <View style={styles.statsCard}>
         <View style={styles.statItem}>
           <Text style={styles.statNumber}>{attendance.length}</Text>
-          <Text style={styles.statLabel}>Total Days</Text>
+          <Text style={styles.statLabel}>
+            {activeFilter === 'all' ? 'Total Days' : 'Filtered'}
+          </Text>
         </View>
         <View style={styles.statDivider} />
         <View style={styles.statItem}>
@@ -322,7 +331,9 @@ const StudentPortalScreen = () => {
 
       <View style={styles.attendanceSection}>
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Attendance History</Text>
+          <Text style={styles.sectionTitle}>
+            Attendance History {activeFilter !== 'all' && `(${activeFilter})`}
+          </Text>
           <View style={styles.headerButtons}>
             <TouchableOpacity onPress={() => setShowFilterModal(true)} style={styles.filterButton}>
               <Text style={styles.filterButtonText}>📅</Text>
@@ -335,7 +346,11 @@ const StudentPortalScreen = () => {
 
         {attendance.length === 0 ? (
           <View style={styles.emptyState}>
-            <Text style={styles.emptyText}>📚 No attendance records yet</Text>
+            <Text style={styles.emptyText}>
+              {activeFilter === 'all'
+                ? '📚 No attendance records yet'
+                : `📅 No records found for ${activeFilter}`}
+            </Text>
             <TouchableOpacity onPress={onRefresh} style={styles.retryButton}>
               <Text style={styles.retryText}>Refresh Data</Text>
             </TouchableOpacity>
@@ -372,33 +387,75 @@ const StudentPortalScreen = () => {
 
               {/* Preset Buttons */}
               <View style={styles.presetsContainer}>
-                <TouchableOpacity style={styles.presetButton} onPress={() => applyPreset('today')}>
+                <TouchableOpacity
+                  style={[
+                    styles.presetButton,
+                    activeFilter === 'today' && styles.activePresetButton
+                  ]}
+                  onPress={() => applyPreset('today')}
+                >
                   <Text style={styles.presetButtonText}>📅 Today</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity style={styles.presetButton} onPress={() => applyPreset('yesterday')}>
+                <TouchableOpacity
+                  style={[
+                    styles.presetButton,
+                    activeFilter === 'yesterday' && styles.activePresetButton
+                  ]}
+                  onPress={() => applyPreset('yesterday')}
+                >
                   <Text style={styles.presetButtonText}>📆 Yesterday</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity style={styles.presetButton} onPress={() => applyPreset('lastWeek')}>
+                <TouchableOpacity
+                  style={[
+                    styles.presetButton,
+                    activeFilter === 'lastWeek' && styles.activePresetButton
+                  ]}
+                  onPress={() => applyPreset('lastWeek')}
+                >
                   <Text style={styles.presetButtonText}>📊 Last 7 Days</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity style={styles.presetButton} onPress={() => applyPreset('last2Weeks')}>
+                <TouchableOpacity
+                  style={[
+                    styles.presetButton,
+                    activeFilter === 'last2Weeks' && styles.activePresetButton
+                  ]}
+                  onPress={() => applyPreset('last2Weeks')}
+                >
                   <Text style={styles.presetButtonText}>📈 Last 2 Weeks</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity style={styles.presetButton} onPress={() => applyPreset('lastMonth')}>
+                <TouchableOpacity
+                  style={[
+                    styles.presetButton,
+                    activeFilter === 'lastMonth' && styles.activePresetButton
+                  ]}
+                  onPress={() => applyPreset('lastMonth')}
+                >
                   <Text style={styles.presetButtonText}>📉 Last 30 Days</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity style={styles.presetButton} onPress={() => applyPreset('thisMonth')}>
+                <TouchableOpacity
+                  style={[
+                    styles.presetButton,
+                    activeFilter === 'thisMonth' && styles.activePresetButton
+                  ]}
+                  onPress={() => applyPreset('thisMonth')}
+                >
                   <Text style={styles.presetButtonText}>🗓️ This Month</Text>
                 </TouchableOpacity>
               </View>
 
               {/* Show All Button */}
-              <TouchableOpacity style={styles.showAllButton} onPress={clearFilter}>
+              <TouchableOpacity
+                style={[
+                  styles.showAllButton,
+                  activeFilter === 'all' && styles.activeShowAllButton
+                ]}
+                onPress={clearFilter}
+              >
                 <Text style={styles.showAllButtonText}>📋 Show All Records</Text>
               </TouchableOpacity>
 
@@ -415,49 +472,15 @@ const StudentPortalScreen = () => {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f1f5f9' },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#f1f5f9'
-  },
-  loadingText: {
-    marginTop: 16,
-    fontSize: 16,
-    color: '#64748b',
-    fontWeight: '500'
-  },
-  header: {
-    backgroundColor: '#6366f1',
-    padding: 24,
-    paddingTop: 48,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start'
-  },
+  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f1f5f9' },
+  loadingText: { marginTop: 16, fontSize: 16, color: '#64748b', fontWeight: '500' },
+  header: { backgroundColor: '#6366f1', padding: 24, paddingTop: 48, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   welcomeText: { fontSize: 14, color: 'rgba(255,255,255,0.8)' },
   nameText: { fontSize: 24, fontWeight: '700', color: 'white', marginTop: 4 },
   emailText: { fontSize: 14, color: 'rgba(255,255,255,0.9)', marginTop: 4 },
-  logoutButton: {
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8
-  },
+  logoutButton: { backgroundColor: 'rgba(255,255,255,0.2)', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8 },
   logoutText: { color: 'white', fontWeight: '600' },
-  statsCard: {
-    backgroundColor: 'white',
-    margin: 16,
-    padding: 20,
-    borderRadius: 16,
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4
-  },
+  statsCard: { backgroundColor: 'white', margin: 16, padding: 20, borderRadius: 16, flexDirection: 'row', justifyContent: 'space-around', elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4 },
   statItem: { alignItems: 'center' },
   statNumber: { fontSize: 28, fontWeight: '700', color: '#6366f1' },
   statLabel: { fontSize: 12, color: '#64748b', marginTop: 4 },
@@ -466,85 +489,32 @@ const styles = StyleSheet.create({
   filterText: { fontSize: 14, fontWeight: '600', color: '#6366f1' },
   clearFilterText: { fontSize: 14, fontWeight: '600', color: '#ef4444' },
   attendanceSection: { flex: 1, paddingHorizontal: 16 },
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-    marginTop: 8
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#1e293b'
-  },
+  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, marginTop: 8 },
+  sectionTitle: { fontSize: 18, fontWeight: '700', color: '#1e293b' },
   headerButtons: { flexDirection: 'row', gap: 8 },
   filterButton: { padding: 8, backgroundColor: '#e0e7ff', borderRadius: 20, width: 36, height: 36, justifyContent: 'center', alignItems: 'center' },
   filterButtonText: { fontSize: 18 },
-  refreshButton: {
-    padding: 8,
-    backgroundColor: '#e2e8f0',
-    borderRadius: 20
-  },
-  refreshText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#6366f1'
-  },
-  attendanceCard: {
-    backgroundColor: 'white',
-    padding: 16,
-    borderRadius: 12,
-    marginBottom: 12,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    elevation: 1,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2
-  },
+  refreshButton: { padding: 8, backgroundColor: '#e2e8f0', borderRadius: 20 },
+  refreshText: { fontSize: 16, fontWeight: '700', color: '#6366f1' },
+  attendanceCard: { backgroundColor: 'white', padding: 16, borderRadius: 12, marginBottom: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', elevation: 1, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2 },
   cardLeft: { flex: 1 },
   dateText: { fontSize: 16, fontWeight: '600', color: '#1e293b' },
-  subjectText: { fontSize: 14, color: '#64748b', marginTop: 4 },
-  idText: {
-    fontSize: 11,
-    color: '#64748b',
-    fontFamily: 'monospace',
-    marginTop: 2,
-    fontWeight: '500'
-  },
   statusBadge: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
   statusText: { color: 'white', fontSize: 12, fontWeight: '700' },
-  emptyState: {
-    backgroundColor: 'white',
-    padding: 40,
-    borderRadius: 12,
-    alignItems: 'center',
-    elevation: 1
-  },
+  emptyState: { backgroundColor: 'white', padding: 40, borderRadius: 12, alignItems: 'center', elevation: 1 },
   emptyText: { fontSize: 16, color: '#94a3b8', textAlign: 'center' },
-  retryButton: {
-    marginTop: 16,
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    backgroundColor: '#6366f1',
-    borderRadius: 8
-  },
-  retryText: {
-    color: 'white',
-    fontWeight: '600',
-    fontSize: 14
-  },
+  retryButton: { marginTop: 16, paddingHorizontal: 24, paddingVertical: 12, backgroundColor: '#6366f1', borderRadius: 8 },
+  retryText: { color: 'white', fontWeight: '600', fontSize: 14 },
   listContent: { paddingBottom: 16 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   modalContent: { backgroundColor: 'white', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, maxHeight: '70%' },
   modalTitle: { fontSize: 24, fontWeight: '700', color: '#1e293b', marginBottom: 20 },
   presetsContainer: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 16 },
   presetButton: { backgroundColor: '#6366f1', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 12, minWidth: '47%', alignItems: 'center' },
+  activePresetButton: { backgroundColor: '#4f46e5', borderWidth: 2, borderColor: '#818cf8' }, // ✅ Highlight active
   presetButtonText: { color: 'white', fontWeight: '600', fontSize: 14 },
   showAllButton: { backgroundColor: '#10b981', padding: 16, borderRadius: 12, alignItems: 'center', marginTop: 8 },
+  activeShowAllButton: { backgroundColor: '#059669', borderWidth: 2, borderColor: '#34d399' }, // ✅ Highlight active
   showAllButtonText: { color: 'white', fontWeight: '700', fontSize: 16 },
   closeButton: { marginTop: 16, padding: 16, backgroundColor: '#f1f5f9', borderRadius: 12, alignItems: 'center' },
   closeButtonText: { color: '#64748b', fontWeight: '600', fontSize: 16 },
